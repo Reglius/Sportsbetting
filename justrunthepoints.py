@@ -85,49 +85,17 @@ def parse_lineup_status():
                
    return out_players
 
-def parse_betting_data(text):
-    games = {}
-    current_game = None
-    
-    for line in text.split('\n'):
-        if line.startswith('=='):
-            continue
-        if not line.strip():
-            continue
-            
-        if '@' in line:
-            teams = line.strip().split(' @ ')
-            current_game = teams[0].strip()
-            games[current_game] = {
-                'away_team': teams[0].strip(),
-                'home_team': teams[1].strip(),
-                'odds': {}
-            }
-        elif line.startswith('BetUS:'):
-            continue
-        elif line.startswith('h2h:'):
-            odds = eval(line.split('h2h: ')[1])
-            games[current_game]['odds']['h2h'] = odds
-        elif line.startswith('spreads:'):
-            spreads = eval(line.split('spreads: ')[1])
-            games[current_game]['odds']['spreads'] = spreads
-        elif line.startswith('totals:'):
-            totals = eval(line.split('totals: ')[1])
-            games[current_game]['odds']['totals'] = totals
-    
-    return games
+def get_home_team(team1, team2, data):
+    """
+    Determines the home team based on which team appears first in the data string.
+    """
+    team1_index = data.find(team1)
+    team2_index = data.find(team2)
 
-def get_game_info(games, team_name):
-    for game in games.values():
-        if team_name in [game['away_team'], game['home_team']]:
-            return game
-    return None
+    if team1_index == -1 or team2_index == -1:
+        raise ValueError("One or both teams not found in data")
 
-def get_all_teams(games):
-    teams = []
-    for game in games.values():
-        teams.extend([game['away_team'], game['home_team']])
-    return teams
+    return team1 if team1_index > team2_index else team2
 
 def compute_dynamic_elo_home_away(
     games_df: pd.DataFrame,
@@ -214,7 +182,7 @@ def compute_dynamic_elo_home_away(
     return elo_history_df, team_elos
 
 # NAME,Team,OPP,Pos,MIN,PTS,REB,AST,STL,BLK,TO,FGM,FGA,FG%,3PM,3PA,3P%,FTM,FTA,FT%,OREB,DREB
-def simulate_games(game, out_list, betting, final_elos):
+def simulate_games(game, out_list, final_elos):
     game['scratch'] = game.apply(lambda x: f"{x['NAME'].split()[0][0]}{x['NAME'].split()[1]}" not in out_list, axis=1)
     game = game[game['scratch'] == True]
 
@@ -222,11 +190,7 @@ def simulate_games(game, out_list, betting, final_elos):
     game['full_team'] = game['Team'].map(team_map)
     game['full_opp'] = game['OPP'].map(team_map)
     
-    for team in game.full_team.unique():
-        if get_game_info(betting, team) is None:
-            print(f'{team} not found')
-
-    game['hometeam'] = game.apply(lambda x: get_game_info(betting, x['full_team']).get('home_team') == x['full_team'], axis=1)
+    game['hometeam'] = game.apply(lambda x: x['Team'] == get_home_team(x['Team'], x['OPP'], data), axis=1)
 
     def calculate_elo_advantage(row):
         home_advantage = final_elos[row['full_team']]['home'] if row['hometeam'] else final_elos[row['full_team']]['away']
@@ -264,13 +228,10 @@ def main():
 
     games_directory = r'D:\SportsBetting\2025\basketball\roto\rotowire-nba-projections.csv'
     out_list = parse_lineup_status()
-    with open(r'D:\SportsBetting\2025\basketball\roto\incominggames.txt', 'r') as file:
-        text_content = file.read()
-    betting = parse_betting_data(text_content)
     _, final_elos = compute_dynamic_elo_home_away(games_df=pd.read_csv(r'D:\SportsBetting\2025\basketball\roto\season.csv'))
 
     game = pd.read_csv(games_directory)
-    simulate_games(game, out_list, betting, final_elos)
+    simulate_games(game, out_list, final_elos)
 
 if __name__ == "__main__":
     main()
